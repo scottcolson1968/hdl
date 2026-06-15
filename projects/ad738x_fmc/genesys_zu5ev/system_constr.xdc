@@ -20,3 +20,21 @@ set_multicycle_path -setup 8 -to [get_cells -hierarchical -filter {NAME=~*/data_
 set_multicycle_path -hold  7 -to [get_cells -hierarchical -filter {NAME=~*/data_sdo_shift_reg[*]}] -from [get_clocks spi_clk]
 set_multicycle_path -setup 8 -to [get_cells -hierarchical -filter {NAME=~*/spi_ad738x_adc_execution/inst/left_aligned_reg*}] -from [get_clocks spi_clk]
 set_multicycle_path -hold  7 -to [get_cells -hierarchical -filter {NAME=~*/spi_ad738x_adc_execution/inst/left_aligned_reg*}] -from [get_clocks spi_clk]
+
+## 10G SFP+ (GTH bank 224 ch3 via high-speed mux; RM 7.3 + schematic)
+## GT lane/refclk LOCs are set by the xxv_ethernet IP (Quad_X0Y1, lane X0Y7,
+## MGTREFCLK0_224 = Y6/Y5). Only the refclk package pins are pinned here.
+set_property PACKAGE_PIN Y6 [get_ports gt_refclk_p]
+set_property PACKAGE_PIN Y5 [get_ports gt_refclk_n]
+create_clock -period 6.400 -name gt_refclk [get_ports gt_refclk_p]
+
+## SFP low-speed control (bank 44, pulled up on-board)
+set_property -dict {PACKAGE_PIN AD14 IOSTANDARD LVCMOS33} [get_ports sfp_mod_detect]
+set_property -dict {PACKAGE_PIN W13  IOSTANDARD LVCMOS33} [get_ports sfp_rs0]
+set_property -dict {PACKAGE_PIN Y14  IOSTANDARD LVCMOS33} [get_ports sfp_rs1]
+set_property -dict {PACKAGE_PIN W14  IOSTANDARD LVCMOS33} [get_ports sfp_rx_los]
+set_property -dict {PACKAGE_PIN AB13 IOSTANDARD LVCMOS33} [get_ports sfp_tx_disable]
+set_property -dict {PACKAGE_PIN AA13 IOSTANDARD LVCMOS33} [get_ports sfp_tx_fault]
+
+## GTH lane mux: 1 = SFP, 0 = FMC GBT (bank 45)
+set_property -dict {PACKAGE_PIN D10 IOSTANDARD LVCMOS18} [get_ports sel_sfp_not_fmc]
