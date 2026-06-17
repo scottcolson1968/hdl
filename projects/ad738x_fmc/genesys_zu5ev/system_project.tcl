@@ -13,7 +13,10 @@ source $ad_hdl_dir/projects/scripts/adi_board.tcl
 if {[info exists ::env(GENESYS_ZU_BOARD_FILES)]} {
   set_param board.repoPaths [list $::env(GENESYS_ZU_BOARD_FILES)]
 } else {
-  set_param board.repoPaths [list "D:/digilent-vivado-boards/new/board_files"]
+  # WSL/Linux Vivado needs the /mnt/d view; fall back to the Windows path.
+  set _gzu_bf "/mnt/d/digilent-vivado-boards/new/board_files"
+  if {![file isdirectory $_gzu_bf]} { set _gzu_bf "D:/digilent-vivado-boards/new/board_files" }
+  set_param board.repoPaths [list $_gzu_bf]
 }
 
 set GENESYS_ZU_BOARD [lindex [lsearch -all -inline [get_board_parts] digilentinc.com:gzu_5ev:*] end]
