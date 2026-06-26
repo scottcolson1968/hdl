@@ -4,7 +4,7 @@
 #
 # Usage (PowerShell):
 #   cd D:\hdl\projects\ad738x_fmc\genesys_zu5ev
-#   .\build_win.ps1                      # NUM_OF_SDI=1, ALERT_SPI_N=0 defaults
+#   .\build_win.ps1                      # NUM_OF_SDI=4, ALERT_SPI_N=0 defaults
 #   $env:NUM_OF_SDI = "2"; .\build_win.ps1
 param(
   [string]$Vivado = "D:\Xilinx\Vivado\2025.1\bin\vivado.bat",

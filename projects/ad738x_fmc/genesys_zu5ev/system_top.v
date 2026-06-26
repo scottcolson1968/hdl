@@ -37,7 +37,7 @@
 
 module system_top #(
   parameter ALERT_SPI_N = 0,
-  parameter NUM_OF_SDI = 1
+  parameter NUM_OF_SDI = 4
 ) (
 
   input   [ 8:0]  gpio_bd_i,

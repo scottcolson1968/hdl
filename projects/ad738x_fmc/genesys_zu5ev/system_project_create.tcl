@@ -63,4 +63,3 @@ switch [get_env_param NUM_OF_SDI 4] {
   }
 }
 
-adi_project_run ad738x_fmc_genesys_zu5ev

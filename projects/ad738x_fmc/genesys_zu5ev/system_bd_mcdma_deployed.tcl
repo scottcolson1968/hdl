@@ -21,9 +21,6 @@ source $ad_hdl_dir/projects/common/genesys-zu5ev/genesys_zu5ev_system_bd.tcl
 source $ad_hdl_dir/projects/scripts/adi_pd.tcl
 
 # block design
-# Enable the 16ch stream-convert path (4ch->16ch data widener via the
-# streamToSteam HLS IP, now in the ADI library). Reproduces the gzu_5ev format.
-set ad738x_streamconv 1
 source ../common/ad738x_bd.tcl
 
 # system ID
