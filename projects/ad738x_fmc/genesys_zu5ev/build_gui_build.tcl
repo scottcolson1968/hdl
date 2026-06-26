@@ -23,6 +23,8 @@ update_ip_catalog
 # Build the block design from the GUI export (creates + validates + saves bd)
 set design_name system
 source system_bd_gui.tcl
+set_property -dict [list CONFIG.PULSE_0_PERIOD {40}] [get_bd_cells spi_trigger_gen]
+save_bd_design
 puts "GUI-BD-VALIDATED cells=[llength [get_bd_cells]] hls=[llength [get_bd_cells -quiet -filter {VLNV =~ *hls:streamToSteam*}]]"
 
 # Wrapper + ADI top
