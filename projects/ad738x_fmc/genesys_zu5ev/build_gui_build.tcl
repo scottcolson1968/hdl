@@ -24,6 +24,8 @@ update_ip_catalog
 set design_name system
 source system_bd_gui.tcl
 set_property -dict [list CONFIG.PULSE_0_PERIOD {40}] [get_bd_cells spi_trigger_gen]
+# ADC "en" enable GPIO -> axi_ad738x_dma/sync (see adc_en_gpio.tcl)
+source adc_en_gpio.tcl
 save_bd_design
 puts "GUI-BD-VALIDATED cells=[llength [get_bd_cells]] hls=[llength [get_bd_cells -quiet -filter {VLNV =~ *hls:streamToSteam*}]]"
 
