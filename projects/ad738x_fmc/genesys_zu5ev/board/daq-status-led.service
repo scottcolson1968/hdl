@@ -1,0 +1,17 @@
+[Unit]
+Description=DAQ status RGB LED (red=boot, blue=starting, green=safe to connect)
+Documentation=file:///usr/local/bin/daq_status_led.sh
+# Start after the IIO daemons are launched; the script then *verifies* they are
+# actually listening before turning the LED green.
+After=iiod026.service iiod_ffs.service
+Wants=iiod026.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/daq_status_led.sh
+# If the script ever dies, restart it (and the LED returns to red until then).
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

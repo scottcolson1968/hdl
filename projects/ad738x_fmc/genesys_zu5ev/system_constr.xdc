@@ -38,3 +38,9 @@ set_property -dict {PACKAGE_PIN AA13 IOSTANDARD LVCMOS33} [get_ports sfp_tx_faul
 
 ## GTH lane mux: 1 = SFP, 0 = FMC GBT (bank 45)
 set_property -dict {PACKAGE_PIN D10 IOSTANDARD LVCMOS18} [get_ports sel_sfp_not_fmc]
+
+## RGB status LED LD5 (bank 66, LVCMOS12) <- PS EMIO GPIO o[46:44].
+## daq-status-led.service: red=booting, blue=iiod starting, green=safe to connect.
+set_property -dict {PACKAGE_PIN C9 IOSTANDARD LVCMOS12} [get_ports ld5_r];  ## Sch=ld5_r
+set_property -dict {PACKAGE_PIN B9 IOSTANDARD LVCMOS12} [get_ports ld5_g];  ## Sch=ld5_g
+set_property -dict {PACKAGE_PIN A8 IOSTANDARD LVCMOS12} [get_ports ld5_b];  ## Sch=ld5_b

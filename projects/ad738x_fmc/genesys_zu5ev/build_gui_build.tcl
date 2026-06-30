@@ -26,6 +26,8 @@ source system_bd_gui.tcl
 set_property -dict [list CONFIG.PULSE_0_PERIOD {40}] [get_bd_cells spi_trigger_gen]
 # ADC "en" enable GPIO -> axi_ad738x_dma/sync (see adc_en_gpio.tcl)
 source adc_en_gpio.tcl
+# RGB status LED (LD5) AXI GPIO -> external rgb_led_o (see rgb_led_gpio.tcl)
+source rgb_led_gpio.tcl
 # Async 4.096 MSPS trigger: clk_wiz(102.4)->fit_timer(/25) (see async_4096_trigger.tcl)
 source async_4096_trigger.tcl
 save_bd_design

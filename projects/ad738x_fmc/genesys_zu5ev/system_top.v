@@ -43,6 +43,11 @@ module system_top #(
   input   [ 8:0]  gpio_bd_i,
   output  [ 3:0]  gpio_bd_o,
 
+  // RGB status LED (LD5), driven from PS EMIO GPIO o[46:44]
+  output          ld5_r,
+  output          ld5_g,
+  output          ld5_b,
+
   input           spi_sdia,
   input           spi_sdib,
   input           spi_sdic,
@@ -77,6 +82,7 @@ module system_top #(
 
   wire    [94:0]  gpio_i;
   wire    [94:0]  gpio_o;
+  wire    [ 2:0]  rgb_led_o;
   wire            vadj_clk;
 
   wire [NUM_OF_SDI-1:0] ad738x_spi_sdi_s;
@@ -104,6 +110,15 @@ module system_top #(
   assign vadj_auton = (vadj_arm_cnt[28] & ~gpio_o[37]) | gpio_o[36];
 
   assign gpio_bd_o = gpio_o[3:0];
+
+  // RGB status LED (LD5) <- dedicated AXI GPIO axi_gpio_rgb_led (PL @0xa0080000).
+  // The PS EMIO GPIO has only 3 output bits (PSU__GPIO_EMIO_WIDTH=3), all used by
+  // the green board LEDs, so the RGB LED is driven from its own memory-mapped AXI
+  // GPIO. Bound by leds-gpio "daq:red/green/blue" + daq-status-led.service:
+  // red = booting, blue = iiod starting, green = safe for a PC client to connect.
+  assign ld5_r = rgb_led_o[0];
+  assign ld5_g = rgb_led_o[1];
+  assign ld5_b = rgb_led_o[2];
 
   assign gpio_i[ 3: 0] = gpio_o[3:0];
   assign gpio_i[12: 4] = gpio_bd_i;
@@ -142,6 +157,7 @@ module system_top #(
     .gpio_i (gpio_i),
     .gpio_o (gpio_o),
     .gpio_t (),
+    .rgb_led_o (rgb_led_o),
     .spi0_csn (),
     .spi0_miso (1'b0),
     .spi0_mosi (),
