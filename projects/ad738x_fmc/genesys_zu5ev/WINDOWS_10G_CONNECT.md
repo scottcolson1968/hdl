@@ -83,6 +83,54 @@ iio_readdev -u ip:10.2.2.2 -b 14336 -B ad7383-4 \
 
 In **IIO Oscilloscope**: add a **Remote / Network** context at `ip:10.2.2.2`.
 
+## 6. NIC tuning
+
+One change is **required** for reliability; the rest is a verified reference
+baseline to compare against if throughput falls short.
+
+### Required: disable NIC power management
+
+Windows defaults to allowing the OS to power the NIC down, which can stall a
+long‑running acquisition when the machine idles. Turn it off:
+
+**Device Manager → the 10 G adapter → Properties → Power Management →
+un‑check "Allow the computer to turn off this device to save power"**
+
+or from an **elevated** PowerShell:
+```
+Disable-NetAdapterPowerManagement -Name '<10G adapter name>'
+```
+(Non‑elevated shells silently leave it Enabled — verify with
+`Get-NetAdapterPowerManagement`.)
+
+### Verified reference baseline (full ADC rate)
+
+This configuration (Intel **X550‑T2**, inbox driver 4.1.196.0) sustains the
+DAQ's **full ADC output (~259 MB/s ≈ 2.1 Gbps) over `iiod`** — network capture
+equals local capture rate, so nothing beyond it is needed:
+
+| Advanced setting (Device Manager → Advanced) | Value |
+|---|---|
+| Jumbo Packet | **9014 Bytes** (§3 — the one throughput‑critical setting) |
+| Receive Buffers | 4096 (max) |
+| Transmit Buffers | 16384 (max) |
+| Receive Side Scaling | Enabled (16 queues) |
+| TCP/UDP/IPv4 Checksum Offload | Rx & Tx Enabled |
+| Large Send Offload V2 (IPv4) | Enabled |
+| Interrupt Moderation | Enabled (Rate: Extreme is fine for bulk streaming) |
+| Flow Control | Rx & Tx Enabled (board sends no pause frames; harmless) |
+
+OS defaults that should be left alone: TCP receive window auto‑tuning `normal`
+(`netsh interface tcp show global`), RSS enabled globally. RSC is not exposed
+by this driver and is not needed.
+
+Quick audit of the installed adapter:
+```
+Get-NetAdapterAdvancedProperty -Name '<10G adapter name>' |
+    Select-Object DisplayName, DisplayValue
+Get-NetAdapterPowerManagement  -Name '<10G adapter name>'
+```
+
 ---
 
 ## Troubleshooting
@@ -92,7 +140,11 @@ In **IIO Oscilloscope**: add a **Remote / Network** context at `ip:10.2.2.2`.
   be `up` (10 G eval link can be intermittent).
 - **`iio_info` connects but shows no channels / no data** → libiio version mismatch
   (see §5); use the 0.26‑matched build / IIO Oscilloscope.
-- **Low throughput** → Jumbo Packet not set to 9014 on the PC adapter (§3).
+- **Low throughput** → Jumbo Packet not set to 9014 on the PC adapter (§3); compare
+  the adapter against the reference baseline (§6).
+- **Acquisition stalls after hours / link drops when the PC idles** → NIC power
+  management still enabled (§6) — it defaults to on and needs an elevated shell
+  or Device Manager to disable.
 - **Can't reach it at all** → confirm you're on the **10 G** adapter's subnet, not the
   board's 1 G port (`10.0.0.2/24`), which is a separate interface.
 
