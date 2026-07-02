@@ -17,7 +17,8 @@ if {$bp eq ""} { return -code error "Genesys ZU board part not found" }
 set_property BOARD_PART $bp [current_project]
 
 # IP repo: ADI library tree (spi_engine, axi_dmac, streamToSteam HLS, etc.)
-set_property ip_repo_paths [list $hdl/library] [current_fileset]
+# plus our open TX checksum-offload IP (cso_open/iprepo).
+set_property ip_repo_paths [list $hdl/library [pwd]/cso_open/iprepo] [current_fileset]
 update_ip_catalog
 
 # Build the block design from the GUI export (creates + validates + saves bd)
@@ -30,6 +31,8 @@ source adc_en_gpio.tcl
 source rgb_led_gpio.tcl
 # Async 4.096 MSPS trigger: clk_wiz(102.4)->fit_timer(/25) (see async_4096_trigger.tcl)
 source async_4096_trigger.tcl
+# TX TCP checksum offload: splice tx_csum_open into the XXV tx path (see tx_csum_splice.tcl)
+source tx_csum_splice.tcl
 save_bd_design
 puts "GUI-BD-VALIDATED cells=[llength [get_bd_cells]] hls=[llength [get_bd_cells -quiet -filter {VLNV =~ *hls:streamToSteam*}]]"
 
