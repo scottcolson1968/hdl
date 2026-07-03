@@ -26,7 +26,9 @@ BUN="$OUT/wildcat_update_${VER}.tar"
 
 HDL_GIT=$(git -C /d/hdl rev-parse --short HEAD 2>/dev/null || echo unknown)
 HDL_DIRTY=$(git -C /d/hdl status --porcelain 2>/dev/null | grep -cE '^( M|M | A|A )' || true)
-LNX_GIT=$(git -C '//wsl.localhost/Ubuntu/home/scott/linux-adi' rev-parse --short HEAD 2>/dev/null || echo unknown)
+# kernel tree lives in WSL; git can't operate over the UNC path -> use wsl.exe
+LNX_GIT=$(wsl.exe bash -c "git -C /home/scott/linux-adi rev-parse --short HEAD" 2>/dev/null | tr -d '\r\n' || true)
+[ -n "$LNX_GIT" ] || LNX_GIT=unknown
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
