@@ -33,6 +33,8 @@ source rgb_led_gpio.tcl
 source async_4096_trigger.tcl
 # TX TCP checksum offload: splice tx_csum_open into the XXV tx path (see tx_csum_splice.tcl)
 source tx_csum_splice.tcl
+# License-free 10G: PCS-only xxv + open MAC + register shim (see open_mac_splice.tcl)
+source open_mac_splice.tcl
 save_bd_design
 puts "GUI-BD-VALIDATED cells=[llength [get_bd_cells]] hls=[llength [get_bd_cells -quiet -filter {VLNV =~ *hls:streamToSteam*}]]"
 
