@@ -1,0 +1,82 @@
+#!/bin/bash
+###############################################################################
+# daq-usb-update - USB-stick front-end for daq-update (Genesys ZU)
+#
+# Triggered by udev (99-daq-usb-update.rules -> daq-usb-update@<part>.service)
+# when a USB block partition appears. Operator flow: copy daq_update_<v>.tar
+# onto a FAT32 stick, plug it into a USB-A port, wait for GREEN, done. The
+# board reboots itself into the new version; result-<v>.txt lands on the stick.
+#
+# LED (if this build has the RGB LED; silently skipped on older versions):
+#   blue solid  = update in progress      green solid = success (reboots ~1min)
+#   red solid   = bundle bad / apply failed (see result txt on stick)
+# (solid colors + systemd 'shutdown -r' keep everything cgroup-safe: no
+#  background children that systemd would reap when this oneshot exits)
+#
+# Safety:
+#   * a stick with no daq_update_*.tar is ignored completely
+#   * md5 manifest gates execution (arbitrary files do nothing)
+#   * same-version bundle = no-op (prevents reboot loops with stick inserted)
+#   * single-instance lock; work dir on SD (not RAM)
+###############################################################################
+set -u
+PART="${1:?usage: daq-usb-update <partition, e.g. sda1>}"
+DEV="/dev/$PART"
+MNT="/run/daqstick"
+WORK="/root/daq_update_work"
+LOCK="/run/daq_usb_update.lock"
+LEDS=/sys/class/leds
+
+exec 9>"$LOCK"; flock -n 9 || exit 0          # another instance is running
+
+led() { [ -e "$LEDS/daq:$1/brightness" ] && echo "$2" > "$LEDS/daq:$1/brightness" 2>/dev/null; }
+led_solid() { led red 0; led green 0; led blue 0; led "$1" 1; }
+led_restore() { systemctl restart daq-status-led 2>/dev/null || { led red 0; led green 0; led blue 0; }; }
+
+[ -b "$DEV" ] || exit 0
+mkdir -p "$MNT"
+mountpoint -q "$MNT" && umount "$MNT" 2>/dev/null
+mount -o rw,flush "$DEV" "$MNT" 2>/dev/null || exit 0    # not mountable -> ignore
+
+# newest bundle on the stick root, if any (wildcat_* current, daq_* legacy)
+BUN=$(ls -1t "$MNT"/wildcat_update_*.tar "$MNT"/daq_update_*.tar 2>/dev/null | head -1)
+if [ -z "$BUN" ]; then umount "$MNT"; exit 0; fi          # ordinary stick -> ignore
+
+RES="$MNT/result-$(basename "$BUN" .tar)-$(date +%Y%m%d_%H%M%S 2>/dev/null || echo now).txt"
+echo "DAQ USB update $(date)" > "$RES"
+echo "bundle: $(basename "$BUN")" >> "$RES"
+led_solid blue
+
+rm -rf "$WORK"; mkdir -p "$WORK"
+if ! tar -xf "$BUN" -C "$WORK" 2>>"$RES"; then
+    echo "FAILED: bundle tar extract" >> "$RES"
+    sync; umount "$MNT"; led_solid red; exit 1
+fi
+
+/usr/local/bin/daq-update "$WORK" --result "$RES"
+RC=$?
+rm -rf "$WORK"
+
+case $RC in
+0)
+    echo "SUCCESS - rebooting into the new version in ~1 minute." >> "$RES"
+    echo "You may remove the stick as soon as the LED turns GREEN." >> "$RES"
+    sync; umount "$MNT"
+    led_solid green
+    shutdown -r +1 "DAQ update applied - rebooting" 2>/dev/null || reboot
+    ;;
+3)
+    echo "No action: board is already at this version. Safe to remove stick." >> "$RES"
+    sync; umount "$MNT"
+    led_solid green
+    sleep 5; led_restore
+    ;;
+*)
+    echo "UPDATE FAILED (rc=$RC). Board boot files unchanged or restored from" >> "$RES"
+    echo "backup (see lines above). Remove stick; board keeps running as-is." >> "$RES"
+    sync; umount "$MNT"
+    led_solid red
+    sleep 60; led_restore
+    ;;
+esac
+exit 0
