@@ -71,7 +71,15 @@ module tx_csum_open #(
 
     // ================= input pass-through + accumulate ==================
     // stall input if meta FIFO can't take another frame's result
-    wire in_block   = meta_full;
+    // pipelined meta-push staging (fold+write happen 1 cycle after tlast)
+    reg        push_pending;
+    reg        push_en_r;
+    reg [15:0] push_insert_r;
+    reg [31:0] push_acc_r;
+
+    // stall input if the meta FIFO can't take this frame's result (account for
+    // a pipelined push still in flight - see push_pending below)
+    wire in_block   = meta_full || (push_pending && (mcnt == META_DEPTH-1));
     assign m_fifo_tdata  = s_in_tdata;
     assign m_fifo_tkeep  = s_in_tkeep;
     assign m_fifo_tlast  = s_in_tlast;
@@ -138,35 +146,49 @@ module tx_csum_open #(
     // this beat's data-word contribution (only beats >=4, when parse known)
     wire [18:0] beat_ms = (e_en && (in_cnt >= 4))
                           ? msum(s_in_tdata, s_in_tkeep, in_cnt, e_start, e_end, e_insert) : 19'd0;
-    // checksum at tlast = fold(~(running acc + this beat + pseudo)). pseudo is
-    // added at beat4 into acc; if tlast==beat4 add it here too (in_cnt<=4 case).
-    wire [15:0] chk_push = fold_cmpl(acc + {13'd0, beat_ms}
-                                     + ((in_cnt<=4 && c_en) ? c_pseudo : 32'd0));
 
+    // Meta push is PIPELINED one cycle after tlast: the raw 32-bit sum is
+    // captured at tlast, the fold + LUTRAM write happen the following cycle.
+    // (fold_cmpl straight off the msum adder cone missed timing at 156.25 MHz
+    // by ~0.3 ns in some placements.) Safe: frames start draining much later
+    // (packet-mode eth_tx_fifo), and min frame spacing (>=9 beats) guarantees
+    // the staging registers are free before the next tlast.
     always @(posedge aclk) begin
         if (!aresetn) begin
             in_cnt<=0; acc<=0; pseudo_r<=0; fs_r<=0; fe_r<=0; fi_r<=0; fen_r<=0;
-            mwr<=0;
-        end else if (in_beat) begin
-            if (in_cnt==12'd1) b1 <= s_in_tdata;
-            if (in_cnt==12'd2) b2 <= s_in_tdata;
-            if (in_cnt==12'd3) b3 <= s_in_tdata;
-            if (parse_now) begin                      // latch parse @ beat4
-                fs_r<=c_start; fe_r<=c_end; fi_r<=c_insert; fen_r<=c_en; pseudo_r<=c_pseudo;
-            end
-            // accumulate (beats>=4 contribute; pseudo added at beat4)
-            if (in_cnt >= 4)
-                acc <= acc + {13'd0, beat_ms} + ((parse_now && c_en) ? c_pseudo : 32'd0);
-
-            if (s_in_tlast) begin
-                // push per-frame meta
+            mwr<=0; push_pending<=0; push_en_r<=0; push_insert_r<=0; push_acc_r<=0;
+        end else begin
+            // stage 2: fold + write meta (one cycle after tlast)
+            if (push_pending) begin
                 meta[mwr[$clog2(META_DEPTH)-1:0]] <=
-                    { e_en, e_insert[BEATCNT_W+2:3], e_insert[2:0], chk_push };
+                    { push_en_r, push_insert_r[BEATCNT_W+2:3], push_insert_r[2:0],
+                      fold_cmpl(push_acc_r) };
                 mwr <= mwr + 1'b1;
-                // reset accumulator for next frame
-                in_cnt<=0; acc<=0;
-            end else begin
-                in_cnt <= in_cnt + 1'b1;
+                push_pending <= 1'b0;
+            end
+            // stage 1: input beat handling
+            if (in_beat) begin
+                if (in_cnt==12'd1) b1 <= s_in_tdata;
+                if (in_cnt==12'd2) b2 <= s_in_tdata;
+                if (in_cnt==12'd3) b3 <= s_in_tdata;
+                if (parse_now) begin                  // latch parse @ beat4
+                    fs_r<=c_start; fe_r<=c_end; fi_r<=c_insert; fen_r<=c_en; pseudo_r<=c_pseudo;
+                end
+                // accumulate (beats>=4 contribute; pseudo added at beat4)
+                if (in_cnt >= 4)
+                    acc <= acc + {13'd0, beat_ms} + ((parse_now && c_en) ? c_pseudo : 32'd0);
+
+                if (s_in_tlast) begin
+                    // capture raw sum; fold+push next cycle
+                    push_en_r     <= e_en;
+                    push_insert_r <= e_insert;
+                    push_acc_r    <= acc + {13'd0, beat_ms}
+                                     + ((in_cnt<=4 && c_en) ? c_pseudo : 32'd0);
+                    push_pending  <= 1'b1;
+                    in_cnt<=0; acc<=0;
+                end else begin
+                    in_cnt <= in_cnt + 1'b1;
+                end
             end
         end
     end

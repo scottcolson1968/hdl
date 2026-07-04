@@ -67,6 +67,12 @@ module open_mac_10g (
     wire        macrx_tvalid, macrx_tlast;
     wire        macrx_tuser;             // 1 = bad frame (FCS/framing)
 
+    // PAUSE_ENABLE: honor IEEE 802.3 annex 31B pause frames from the link
+    // partner (LFC). The PC NIC sends pause when its RX buffers pressure up;
+    // the licensed XXV MAC honored these. Without it, PC-side servicing
+    // hiccups become silent discards -> TCP retransmits (seen 2026-07-03).
+    // rx_lfc_req is CDC'd internally into the tx domain and gates the
+    // transmitter; pause frames are consumed (not forwarded to the DMA).
     eth_mac_10g #(
         .DATA_WIDTH        (64),
         .ENABLE_PADDING    (1),
@@ -74,7 +80,7 @@ module open_mac_10g (
         .MIN_FRAME_LENGTH  (64),
         .PTP_TS_ENABLE     (0),
         .PFC_ENABLE        (0),
-        .PAUSE_ENABLE      (0)
+        .PAUSE_ENABLE      (1)
     ) mac_i (
         .rx_clk           (rx_clk),
         .rx_rst           (rx_rst),
@@ -99,10 +105,10 @@ module open_mac_10g (
         .rx_ptp_ts        (96'd0),
         .tx_axis_ptp_ts   (), .tx_axis_ptp_ts_tag(), .tx_axis_ptp_ts_valid(),
         .tx_lfc_req       (1'b0), .tx_lfc_resend(1'b0),
-        .rx_lfc_en        (1'b0), .rx_lfc_req(), .rx_lfc_ack(1'b0),
+        .rx_lfc_en        (1'b1), .rx_lfc_req(), .rx_lfc_ack(1'b0),
         .tx_pfc_req       (8'd0), .tx_pfc_resend(1'b0),
         .rx_pfc_en        (8'd0), .rx_pfc_req(), .rx_pfc_ack(8'd0),
-        .tx_lfc_pause_en  (1'b0), .tx_pause_req(1'b0), .tx_pause_ack(),
+        .tx_lfc_pause_en  (1'b1), .tx_pause_req(1'b0), .tx_pause_ack(),
         .tx_start_packet  (), .tx_error_underflow(),
         .rx_start_packet  (), .rx_error_bad_frame(), .rx_error_bad_fcs(rx_error_bad_fcs),
         .stat_tx_mcf(), .stat_rx_mcf(),
@@ -113,20 +119,22 @@ module open_mac_10g (
         .cfg_ifg          (8'd12),
         .cfg_tx_enable    (txen_sync[1]),
         .cfg_rx_enable    (rxen_sync[1]),
-        .cfg_mcf_rx_eth_dst_mcast(48'd0), .cfg_mcf_rx_check_eth_dst_mcast(1'b0),
+        // MAC control frame matching: 802.3 pause (dst 01-80-C2-00-00-01,
+        // ethertype 0x8808, opcode 0x0001); consumed, not forwarded to DMA
+        .cfg_mcf_rx_eth_dst_mcast(48'h01_80_C2_00_00_01), .cfg_mcf_rx_check_eth_dst_mcast(1'b1),
         .cfg_mcf_rx_eth_dst_ucast(48'd0), .cfg_mcf_rx_check_eth_dst_ucast(1'b0),
         .cfg_mcf_rx_eth_src(48'd0),       .cfg_mcf_rx_check_eth_src(1'b0),
-        .cfg_mcf_rx_eth_type(16'd0),
-        .cfg_mcf_rx_opcode_lfc(16'd0),    .cfg_mcf_rx_check_opcode_lfc(1'b0),
+        .cfg_mcf_rx_eth_type(16'h8808),
+        .cfg_mcf_rx_opcode_lfc(16'h0001), .cfg_mcf_rx_check_opcode_lfc(1'b1),
         .cfg_mcf_rx_opcode_pfc(16'd0),    .cfg_mcf_rx_check_opcode_pfc(1'b0),
-        .cfg_mcf_rx_forward(1'b0),        .cfg_mcf_rx_enable(1'b0),
+        .cfg_mcf_rx_forward(1'b0),        .cfg_mcf_rx_enable(1'b1),
         .cfg_tx_lfc_eth_dst(48'd0), .cfg_tx_lfc_eth_src(48'd0),
         .cfg_tx_lfc_eth_type(16'd0), .cfg_tx_lfc_opcode(16'd0),
         .cfg_tx_lfc_en(1'b0), .cfg_tx_lfc_quanta(16'd0), .cfg_tx_lfc_refresh(16'd0),
         .cfg_tx_pfc_eth_dst(48'd0), .cfg_tx_pfc_eth_src(48'd0),
         .cfg_tx_pfc_eth_type(16'd0), .cfg_tx_pfc_opcode(16'd0),
         .cfg_tx_pfc_en(1'b0), .cfg_tx_pfc_quanta(128'd0), .cfg_tx_pfc_refresh(128'd0),
-        .cfg_rx_lfc_opcode(16'd0), .cfg_rx_lfc_en(1'b0),
+        .cfg_rx_lfc_opcode(16'h0001), .cfg_rx_lfc_en(1'b1),
         .cfg_rx_pfc_opcode(16'd0), .cfg_rx_pfc_en(1'b0)
     );
 
