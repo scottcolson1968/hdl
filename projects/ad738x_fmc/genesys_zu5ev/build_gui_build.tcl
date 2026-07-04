@@ -47,7 +47,7 @@ set_property top system_top [current_fileset]
 add_files -fileset constrs_1 -norecurse [list \
   $hdl/projects/common/genesys-zu5ev/genesys_zu5ev_system_constr.xdc \
   [pwd]/system_constr.xdc \
-  [pwd]/system_constr_4sdi.xdc ]
+  [pwd]/system_constr_4sdi.xdc   [pwd]/cso_open/cso_open.xdc ]
 
 generate_target all [get_files system.bd]
 puts "GUI-GENERATE-DONE"
