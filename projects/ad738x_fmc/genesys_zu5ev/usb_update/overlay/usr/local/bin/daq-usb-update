@@ -8,8 +8,11 @@
 # board reboots itself into the new version; result-<v>.txt lands on the stick.
 #
 # LED (if this build has the RGB LED; silently skipped on older versions):
-#   blue solid  = update in progress      green solid = success (reboots ~1min)
+#   blue solid  = update in progress, and stays blue through the reboot
+#   green solid = success AND board fully rebooted + ready (safe to remove stick)
 #   red solid   = bundle bad / apply failed (see result txt on stick)
+# Green is driven ONLY by the post-boot status-LED service, so it never appears
+# until the new version is actually up (blue -> reboot -> red booting -> green).
 # (solid colors + systemd 'shutdown -r' keep everything cgroup-safe: no
 #  background children that systemd would reap when this oneshot exits)
 #
@@ -59,10 +62,11 @@ rm -rf "$WORK"
 
 case $RC in
 0)
-    echo "SUCCESS - rebooting into the new version in ~1 minute." >> "$RES"
-    echo "You may remove the stick as soon as the LED turns GREEN." >> "$RES"
+    echo "SUCCESS - applied; rebooting into the new version in ~1 minute." >> "$RES"
+    echo "The LED stays BLUE through the reboot and turns GREEN only once the" >> "$RES"
+    echo "board is fully back up.  Wait for GREEN before removing the stick." >> "$RES"
     sync; umount "$MNT"
-    led_solid green
+    led_solid blue    # stay blue through shutdown+reboot; post-boot status LED goes green when ready
     shutdown -r +1 "DAQ update applied - rebooting" 2>/dev/null || reboot
     ;;
 3)

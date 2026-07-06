@@ -12,10 +12,11 @@ board, wait for the green LED.
 3. Watch the status LED:
    | LED | Meaning |
    |---|---|
-   | **blue** (solid) | update in progress — do not power off |
-   | **green** | success — the board reboots itself within a minute; remove the stick |
+   | **blue** (solid) | update in progress — do not power off. Stays blue through the reboot. |
+   | **green** | done — the new version is fully booted and ready; safe to remove the stick |
    | **red** | update rejected/failed — board unchanged; remove the stick and check the `result-*.txt` file it wrote |
-4. After the reboot the LED goes red → green as usual; green = ready.
+4. The sequence is **blue → red (booting) → green**. Green appears only once the
+   new version is actually up, so waiting for green is always safe.
 
 A `result-…txt` file is written back onto the stick either way — plug the
 stick into any PC to read exactly what happened (old→new version or the
@@ -45,15 +46,44 @@ text; line 1 is always set to the bundle version), `rootfs.tar` (extracted to
 `post.sh` (runs after apply: service enables, deletions, package installs) —
 the latter two are also how the updater updates itself.
 
+## Filesystem (rootfs) changes — the overlay
+
+Everything the DAQ *owns* on the rootfs lives in **`usb_update/overlay/`**, a
+tree that mirrors absolute paths (`overlay/usr/local/bin/…`,
+`overlay/etc/systemd/system/…`, `overlay/etc/udev/rules.d/…`, add
+`overlay/etc/wildcat/…` for WiFi, etc.). It is the single source of truth for
+both first-time bootstrap and updates, so a bootstrapped board and an updated
+board converge to identical rootfs state.
+
+To ship rootfs changes in a bundle:
+```bash
+usb_update/host/make_rootfs.sh rootfs.tar            # tar the whole overlay
+usb_update/host/make_update_bundle.sh 0.72 Image BOOT.BIN system.dtb rootfs.tar \
+    usb_update/post.sh
+```
+`post.sh` runs on the board after extraction to fix exec bits, `daemon-reload`,
+reload udev, `depmod`, and enable the overlay's services (idempotent — ship the
+**whole** overlay every time; it just converges state, and overwritten files are
+backed up). `daq-update` remounts `/` rw for the rootfs/post phase and restores
+ro if the board booted read-only.
+
+**Kernel `Image` bumps:** ship the matching modules too, or `=m` modules (WiFi)
+desync. Build them and fold them into the same `rootfs.tar`:
+```bash
+make modules_install INSTALL_MOD_PATH=/tmp/mods       # -> /tmp/mods/lib/modules/<ver>
+usb_update/host/make_rootfs.sh rootfs.tar /tmp/mods   # overlay + /lib/modules/<ver>
+```
+
 ## One-time board bootstrap (developer side)
 
-The updater lives on the rootfs, so each board needs it installed once:
+The overlay lives on the rootfs, so each board needs it installed once:
 ```bash
 usb_update/install.sh 10.0.0.2
 ```
-After that, all updates can be USB-stick only.
+This streams the whole overlay to the board and runs `post.sh`. After that, all
+updates can be USB-stick only.
 
-## Behavior / safety (engine: `board/daq-update`)
+## Behavior / safety (engine: `overlay/usr/local/bin/daq-update`)
 
 * manifest md5s verified **before** anything is touched
 * current `/boot` files backed up to `/root/boot-bak-<oldver>-<stamp>/`

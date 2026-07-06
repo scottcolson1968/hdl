@@ -112,8 +112,19 @@ if echo "$PAYLOADS" | grep -qx 'VERSION.txt'; then
 fi
 
 # --- optional rootfs payload + post hook (md5 already verified above).
-#     Files the tar will overwrite are saved first (manual rollback:
-#     tar them back from /root/rootfs-bak-<ver>-<stamp>/).
+#     Some builds boot root read-only; remount rw for the duration and restore
+#     ro afterward. Files the tar will overwrite are saved first (manual
+#     rollback: tar them back from /root/rootfs-bak-<ver>-<stamp>/).
+ROOT_WAS_RO=0
+if echo "$PAYLOADS" | grep -qxE 'rootfs\.tar|post\.sh'; then
+    case ",$(awk '$2=="/"{o=$4} END{print o}' /proc/mounts)," in
+        *,ro,*) ROOT_WAS_RO=1 ;;
+    esac
+    if [ "$ROOT_WAS_RO" = 1 ]; then
+        mount -o remount,rw / 2>/dev/null || fail "cannot remount / rw for rootfs update"
+        say "remounted / rw"
+    fi
+fi
 if echo "$PAYLOADS" | grep -qx 'rootfs.tar'; then
     RBAK="/root/rootfs-bak-${CURVER}-${STAMP}"
     tar -tf "$BUNDLE/rootfs.tar" | while read -r p; do
@@ -128,6 +139,9 @@ fi
 if echo "$PAYLOADS" | grep -qx 'post.sh'; then
     bash "$BUNDLE/post.sh" >>"${RESULT:-/dev/null}" 2>&1 || fail "post.sh failed"
     say "post.sh ok"
+fi
+if [ "$ROOT_WAS_RO" = 1 ]; then
+    sync; mount -o remount,ro / 2>/dev/null && say "remounted / ro"
 fi
 
 say "SUCCESS: $CURVER -> $NEWVER"
