@@ -16,10 +16,14 @@
 # (solid colors + systemd 'shutdown -r' keep everything cgroup-safe: no
 #  background children that systemd would reap when this oneshot exits)
 #
-# Safety:
+# Safety / robustness:
 #   * a stick with no daq_update_*.tar is ignored completely
 #   * md5 manifest gates execution (arbitrary files do nothing)
-#   * same-version bundle = no-op (prevents reboot loops with stick inserted)
+#   * same-version bundle = SILENT no-op before any LED/tar/result write, so a
+#     stick left in (udev re-fires the service every boot) or a flaky stick can't
+#     produce a red-flash light show
+#   * reboot-pending flag suppresses re-runs during the shutdown-delay window
+#   * advances the RTC-less board clock from the bundle timestamp (forward only)
 #   * single-instance lock; work dir on SD (not RAM)
 ###############################################################################
 set -u
@@ -45,6 +49,24 @@ mount -o rw,flush "$DEV" "$MNT" 2>/dev/null || exit 0    # not mountable -> igno
 BUN=$(ls -1t "$MNT"/wildcat_update_*.tar "$MNT"/daq_update_*.tar 2>/dev/null | head -1)
 if [ -z "$BUN" ]; then umount "$MNT"; exit 0; fi          # ordinary stick -> ignore
 
+# This board has no RTC/NTP, so its clock lags real time and tar warns "timestamp
+# in the future". Advance the clock to at least the bundle's creation time
+# (forward only) - fixes the warnings and the persistent drift.
+BTS=$(stat -c %Y "$BUN" 2>/dev/null)
+[ -n "$BTS" ] && [ "$(date +%s 2>/dev/null || echo 0)" -lt "$BTS" ] && date -s "@$BTS" >/dev/null 2>&1
+
+# Silent same-version no-op: if the bundle version already matches the installed
+# one, do NOTHING - no LED, no result file, no tar work. Makes a stick-left-in
+# coldplug re-run (fires every boot) invisible, and avoids hammering a flaky
+# stick with result-file writes (the cause of the red-flash "light show").
+BVER=$(tar -xOf "$BUN" ./manifest.txt 2>/dev/null | sed -n 's/^version=//p' | head -1)
+CVER=$(head -1 /boot/VERSION.txt 2>/dev/null | tr -d '[:space:]')
+if [ -n "$BVER" ] && [ "$BVER" = "$CVER" ]; then umount "$MNT" 2>/dev/null; exit 0; fi
+
+# A reboot is already scheduled from a just-applied update (within the shutdown
+# delay window): don't start another pass. /run is tmpfs, cleared on reboot.
+if [ -f /run/daq-reboot-pending ]; then umount "$MNT" 2>/dev/null; exit 0; fi
+
 RES="$MNT/result-$(basename "$BUN" .tar)-$(date +%Y%m%d_%H%M%S 2>/dev/null || echo now).txt"
 echo "DAQ USB update $(date)" > "$RES"
 echo "bundle: $(basename "$BUN")" >> "$RES"
@@ -66,14 +88,16 @@ case $RC in
     echo "The LED stays BLUE through the reboot and turns GREEN only once the" >> "$RES"
     echo "board is fully back up.  Wait for GREEN before removing the stick." >> "$RES"
     sync; umount "$MNT"
+    touch /run/daq-reboot-pending    # suppress re-runs during the shutdown window
     led_solid blue    # stay blue through shutdown+reboot; post-boot status LED goes green when ready
     shutdown -r +1 "DAQ update applied - rebooting" 2>/dev/null || reboot
     ;;
 3)
+    # already-at-version fallback (the silent early-exit above normally handles
+    # this first). Restore the normal ready LED, no misleading flash.
     echo "No action: board is already at this version. Safe to remove stick." >> "$RES"
     sync; umount "$MNT"
-    led_solid green
-    sleep 5; led_restore
+    led_restore
     ;;
 *)
     echo "UPDATE FAILED (rc=$RC). Board boot files unchanged or restored from" >> "$RES"
