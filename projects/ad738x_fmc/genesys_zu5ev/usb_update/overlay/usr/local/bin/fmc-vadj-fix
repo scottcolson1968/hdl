@@ -1,0 +1,52 @@
+#!/bin/bash
+###############################################################################
+# fmc-vadj-fix - patch the EVAL-AD7383-4FMCZ FMC EEPROM so its VADJ DC-Load
+# multirecord requests 2000 mA instead of 4000 mA. The 4 A request exceeds the
+# Genesys ZU's 2.1 A VADJ budget, so the PMCU latches the VADJ fault (red LED)
+# at every power-up. Run this ONCE on each new daughtercard, then POWER-CYCLE.
+# Idempotent: does nothing if the card is already within budget.
+###############################################################################
+set -u
+REC=174                                   # 0xae: DC-Load multirecord header
+O_TYPE=$REC; O_FMT=$((REC+1)); O_LEN=$((REC+2)); O_RCK=$((REC+3)); O_HCK=$((REC+4))
+DATA=$((REC+5)); O_LO=$((DATA+11)); O_HI=$((DATA+12))   # maxI @ 0xbe/0xbf
+TARGET=2000; BUDGET=2100
+die(){ echo "ERROR: $*" >&2; exit 1; }
+
+# locate the FMC EEPROM: at24 24c02 @0x51 on the PCA9548 "chan_id 4" mux bus
+E=""
+for n in /sys/bus/i2c/devices/i2c-*/name; do
+  grep -q "chan_id 4" "$n" 2>/dev/null || continue
+  bus=$(basename "$(dirname "$n")" | sed 's/i2c-//')
+  [ -e "/sys/bus/i2c/devices/${bus}-0051/eeprom" ] && { E="/sys/bus/i2c/devices/${bus}-0051/eeprom"; break; }
+done
+[ -n "$E" ] || die "FMC EEPROM not found (at24 24c02 @0x51 on mux ch4). Is a daughtercard fitted and probed?"
+echo "FMC EEPROM: $E"
+rd(){ dd if="$E" bs=1 skip="$1" count=1 2>/dev/null | od -An -tu1 | tr -d ' '; }
+wr(){ local h; h=$(printf '%02x' "$2"); printf "\x$h" | dd of="$E" bs=1 seek="$1" count=1 conv=notrunc 2>/dev/null; }
+
+[ "$(rd $O_TYPE)" = "2" ] || die "record @0xae is not a DC-Load record (type != 2). Unexpected layout; aborting."
+[ "$(rd $O_LEN)" = "13" ] || die "record length != 13. Unexpected layout; aborting."
+lo=$(rd $O_LO); hi=$(rd $O_HI); maxi=$((lo + hi*256))
+echo "current VADJ max-current request: ${maxi} mA"
+if [ "$maxi" -le "$BUDGET" ]; then echo "Already within the ${BUDGET} mA budget - nothing to do."; exit 0; fi
+
+nlo=$((TARGET & 255)); nhi=$((TARGET >> 8))
+sum=0; for i in $(seq 0 12); do o=$((DATA+i)); v=$(rd $o)
+  [ "$o" = "$O_LO" ] && v=$nlo; [ "$o" = "$O_HI" ] && v=$nhi; sum=$((sum+v)); done
+nrck=$(( (256 - (sum & 255)) & 255 ))
+hsum=$(( $(rd $O_TYPE) + $(rd $O_FMT) + $(rd $O_LEN) + nrck ))
+nhck=$(( (256 - (hsum & 255)) & 255 ))
+printf "patching: maxI %d -> %d mA;  recCk -> 0x%02x  hdrCk -> 0x%02x\n" "$maxi" "$TARGET" "$nrck" "$nhck"
+
+BK=/root/fmc_eeprom_backup_$(date +%Y%m%d_%H%M%S).bin
+dd if="$E" of="$BK" bs=256 count=1 2>/dev/null && echo "backup saved: $BK"
+wr $O_LO $nlo; wr $O_HI $nhi; wr $O_RCK $nrck; wr $O_HCK $nhck; sync
+
+vlo=$(rd $O_LO); vhi=$(rd $O_HI); vmaxi=$((vlo+vhi*256)); vrck=$(rd $O_RCK); vhck=$(rd $O_HCK)
+if [ "$vmaxi" = "$TARGET" ] && [ "$vrck" = "$nrck" ] && [ "$vhck" = "$nhck" ]; then
+  echo "OK: VADJ max-current now ${vmaxi} mA, checksums updated and verified."
+  echo ">>> POWER-CYCLE the board to clear the VADJ fault LED. <<<"
+else
+  die "verify FAILED (maxI=$vmaxi recCk=$vrck hdrCk=$vhck). Restore with: dd if=$BK of=$E bs=256"
+fi
