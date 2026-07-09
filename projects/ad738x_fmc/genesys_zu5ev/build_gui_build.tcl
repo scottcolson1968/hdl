@@ -12,6 +12,10 @@ set_param board.repoPaths [list $bf]
 
 # Fresh project in-place (overwrites the 4ch make-flow project)
 create_project -force $proj [pwd] -part $part
+# Disable the IP OOC cache: it can serve a stale streamToSteam netlist across
+# rebuilds (metadata-only IP changes hash the same), silently re-shipping an old
+# expander. Force fresh OOC synthesis every build.
+config_ip_cache -disable_cache
 set bp [lindex [lsearch -all -inline [get_board_parts] digilentinc.com:gzu_5ev:*] end]
 if {$bp eq ""} { return -code error "Genesys ZU board part not found" }
 set_property BOARD_PART $bp [current_project]
