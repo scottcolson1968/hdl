@@ -1,0 +1,148 @@
+#!/bin/bash
+###############################################################################
+# daq-update - version-agnostic DAQ update apply engine (Genesys ZU)
+#
+# Usage: daq-update <bundle-dir> [--result <file>]
+#   <bundle-dir> holds an extracted update bundle:
+#     manifest.txt   magic=DAQ-UPDATE-V1, version=X.YY, then "<md5>  <file>"
+#                    lines for every payload file (BOOT.BIN, Image, system.dtb,
+#                    optional rootfs.tar, optional post.sh)
+#
+# Behavior (independent of the currently installed version):
+#   * verifies every payload md5 BEFORE touching anything
+#   * no-op (rc=3) if bundle version == current version  (reboot-loop guard;
+#     ship a different version number to force a reapply)
+#   * backs up replaced /boot files to /root/boot-bak-<oldver>-<stamp>/
+#   * writes to /boot (rw remount), syncs, RE-VERIFIES FROM THE MEDIUM
+#   * updates the first line of VERSION.txt to the bundle version
+#   * optional rootfs.tar extracted to /  and post.sh executed (both md5-gated)
+#   * tolerates missing VERSION.txt / missing LED / old builds
+#
+# Exit: 0=applied  3=already-at-version  4=bad bundle  5=apply/verify failure
+###############################################################################
+set -u
+BUNDLE="${1:?usage: daq-update <bundle-dir> [--result <file>]}"
+RESULT=""
+[ "${2:-}" = "--result" ] && RESULT="${3:-}"
+
+say() { echo "$*"; [ -n "$RESULT" ] && echo "$*" >> "$RESULT"; }
+fail() { say "FAILED: $*"; exit "${2:-5}"; }
+
+MF="$BUNDLE/manifest.txt"
+[ -f "$MF" ] || fail "no manifest.txt in bundle" 4
+grep -q '^magic=DAQ-UPDATE-V1$' "$MF" || fail "bad manifest magic" 4
+NEWVER=$(sed -n 's/^version=//p' "$MF" | head -1)
+[ -n "$NEWVER" ] || fail "no version in manifest" 4
+
+# --- current version (tolerant: missing file / unmounted /boot / old builds)
+mountpoint -q /boot || mount -o ro /dev/mmcblk1p1 /boot 2>/dev/null
+CURVER=$(head -1 /boot/VERSION.txt 2>/dev/null | tr -d '[:space:]')
+[ -n "$CURVER" ] || CURVER="unknown"
+say "current=$CURVER bundle=$NEWVER"
+
+if [ "$CURVER" = "$NEWVER" ]; then
+    say "already at $NEWVER - nothing to do"
+    exit 3
+fi
+
+# --- verify all payload md5s up front ('*' = md5sum binary-mode marker, strip
+# it). NB busybox awk lacks {n} regex intervals -> use length()==32 instead.
+PAYLOADS=$(awk 'length($1)==32 && $1 ~ /^[0-9a-f]+$/ {f=$2; sub(/^\*/,"",f); print f}' "$MF")
+[ -n "$PAYLOADS" ] || fail "manifest lists no payload files" 4
+for f in $PAYLOADS; do
+    [ -f "$BUNDLE/$f" ] || fail "payload missing: $f" 4
+done
+( cd "$BUNDLE" && awk 'length($1)==32 && $1 ~ /^[0-9a-f]+$/' "$MF" | md5sum -c --quiet - ) \
+    || fail "payload md5 mismatch" 4
+say "payloads verified: $(echo $PAYLOADS | tr '\n' ' ')"
+
+# --- backup current boot files that will be replaced
+STAMP=$(date +%Y%m%d_%H%M%S 2>/dev/null || echo now)
+BAK="/root/boot-bak-${CURVER}-${STAMP}"
+mkdir -p "$BAK"
+for f in $PAYLOADS; do
+    case "$f" in
+        BOOT.BIN|Image|system.dtb)
+            [ -f "/boot/$f" ] && cp -f "/boot/$f" "$BAK/" ;;
+    esac
+done
+say "backup: $BAK ($(ls "$BAK" 2>/dev/null | tr '\n' ' '))"
+
+# --- apply boot files
+mount -o remount,rw /boot 2>/dev/null || mount /dev/mmcblk1p1 /boot \
+    || fail "cannot mount /boot rw"
+APPLIED=""
+for f in $PAYLOADS; do
+    case "$f" in
+        BOOT.BIN|Image|system.dtb)
+            cp -f "$BUNDLE/$f" "/boot/$f" || fail "write failed: $f"
+            APPLIED="$APPLIED $f" ;;
+    esac
+done
+# VERSION.txt: replace first line, keep the rest (create if absent)
+if [ -f /boot/VERSION.txt ]; then
+    { echo "  $NEWVER"; tail -n +2 /boot/VERSION.txt; } > /tmp/VERSION.new \
+        && cp -f /tmp/VERSION.new /boot/VERSION.txt
+else
+    printf '  %s\n  Note: First line needs to be the current version\n' "$NEWVER" > /boot/VERSION.txt
+fi
+sync
+
+# --- re-verify from the medium
+for f in $PAYLOADS; do
+    case "$f" in
+        BOOT.BIN|Image|system.dtb)
+            WANT=$(awk -v f="$f" '{n=$2; sub(/^\*/,"",n)} n==f {print $1}' "$MF")
+            GOT=$(md5sum "/boot/$f" | awk '{print $1}')
+            [ "$WANT" = "$GOT" ] || fail "MEDIUM VERIFY FAILED: $f (restore from $BAK!)" ;;
+    esac
+done
+umount /boot 2>/dev/null; mount -o ro /dev/mmcblk1p1 /boot 2>/dev/null
+say "applied:$APPLIED  (verified from medium)"
+
+# --- optional full VERSION.txt payload (body text; line 1 normalized below
+#     was already handled in the /boot phase, so re-apply file then re-stamp)
+if echo "$PAYLOADS" | grep -qx 'VERSION.txt'; then
+    mount -o remount,rw /boot 2>/dev/null || mount /dev/mmcblk1p1 /boot
+    cp -f "$BUNDLE/VERSION.txt" /boot/VERSION.txt
+    { echo "  $NEWVER"; tail -n +2 /boot/VERSION.txt; } > /tmp/VERSION.new \
+        && cp -f /tmp/VERSION.new /boot/VERSION.txt
+    sync; umount /boot 2>/dev/null; mount -o ro /dev/mmcblk1p1 /boot 2>/dev/null
+    say "VERSION.txt body replaced"
+fi
+
+# --- optional rootfs payload + post hook (md5 already verified above).
+#     Some builds boot root read-only; remount rw for the duration and restore
+#     ro afterward. Files the tar will overwrite are saved first (manual
+#     rollback: tar them back from /root/rootfs-bak-<ver>-<stamp>/).
+ROOT_WAS_RO=0
+if echo "$PAYLOADS" | grep -qxE 'rootfs\.tar|post\.sh'; then
+    case ",$(awk '$2=="/"{o=$4} END{print o}' /proc/mounts)," in
+        *,ro,*) ROOT_WAS_RO=1 ;;
+    esac
+    if [ "$ROOT_WAS_RO" = 1 ]; then
+        mount -o remount,rw / 2>/dev/null || fail "cannot remount / rw for rootfs update"
+        say "remounted / rw"
+    fi
+fi
+if echo "$PAYLOADS" | grep -qx 'rootfs.tar'; then
+    RBAK="/root/rootfs-bak-${CURVER}-${STAMP}"
+    tar -tf "$BUNDLE/rootfs.tar" | while read -r p; do
+        [ -f "/${p#./}" ] || continue
+        d="$RBAK/$(dirname "${p#./}")"; mkdir -p "$d"
+        cp -a "/${p#./}" "$d/" 2>/dev/null
+    done
+    [ -d "$RBAK" ] && say "rootfs backup: $RBAK"
+    tar -xf "$BUNDLE/rootfs.tar" -C / || fail "rootfs.tar extract failed"
+    say "rootfs.tar applied"
+fi
+if echo "$PAYLOADS" | grep -qx 'post.sh'; then
+    bash "$BUNDLE/post.sh" >>"${RESULT:-/dev/null}" 2>&1 || fail "post.sh failed"
+    say "post.sh ok"
+fi
+if [ "$ROOT_WAS_RO" = 1 ]; then
+    sync; mount -o remount,ro / 2>/dev/null && say "remounted / ro"
+fi
+
+say "SUCCESS: $CURVER -> $NEWVER"
+exit 0

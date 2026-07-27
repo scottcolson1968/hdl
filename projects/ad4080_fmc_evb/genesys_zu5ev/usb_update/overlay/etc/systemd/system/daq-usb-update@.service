@@ -1,0 +1,11 @@
+[Unit]
+Description=DAQ USB auto-update (%i)
+# only after the basic system is up; never during shutdown
+After=multi-user.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/daq-usb-update %i
+# an update (incl. Image extract + md5 of ~60MB) can take a couple of minutes
+TimeoutStartSec=600

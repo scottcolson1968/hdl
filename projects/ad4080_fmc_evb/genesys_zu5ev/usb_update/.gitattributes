@@ -1,0 +1,9 @@
+# Everything under usb_update/ is deployed VERBATIM to a Linux board -- by
+# install.sh (tar | ssh 'tar -xf - -C /') and by host/make_rootfs.sh into
+# rootfs.tar. Neither strips carriage returns, so a CRLF checkout would install
+# scripts with a "#!/bin/bash\r" shebang and the updater would die with
+# "bad interpreter" / "$'\r': command not found".
+#
+# The repo sets core.autocrlf=true and the root .gitattributes has "* text=auto",
+# which converts these to CRLF on checkout on Windows. Pin them to LF.
+* text eol=lf
