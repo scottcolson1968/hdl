@@ -1,0 +1,75 @@
+#!/bin/bash
+###############################################################################
+# daq-adc-defaults - put the AD4080 into the WildCat2 operating point at boot.
+#
+#   sinc5 + compensation filter, total decimation 8, from a 32.768 MHz CNV
+#   -> 4.096 MSPS output data rate.
+#
+# The sysfs oversampling_ratio is the SINC decimation, not the total: the
+# driver doubles it for sinc5+pf1 (ad4080.c read_raw), so 4 here means a total
+# decimation of 8 and SINC_DEC_RATE = 0001b, which is what the hardware
+# specification calls for.
+#
+# ORDER MATTERS: with FILTER_NONE the driver advertises only {1} as an
+# available oversampling_ratio and rejects anything greater, so the filter must
+# be selected first.
+#
+# The device is located BY NAME, never by index: enabling the xilinx-ams system
+# monitor shifts ad4080 from iio:device0 to iio:device1, and a USB WiFi dongle
+# adds a third device ahead of both.
+#
+# Never fails the boot - exits 0 whatever happens, and says why.
+###############################################################################
+set -u
+
+FILTER="sinc5+pf1"
+OSR=4                     # sinc decimation; doubled by sinc5+pf1 -> total 8
+TARGET=4096000            # expected sampling_frequency, Hz
+
+log() { echo "daq-adc-defaults: $*"; }
+
+find_dev() {
+    local d
+    for d in /sys/bus/iio/devices/iio:device*; do
+        [ -r "$d/name" ] || continue
+        if [ "$(cat "$d/name" 2>/dev/null)" = "ad4080" ]; then
+            echo "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
+D=""
+for _ in $(seq 1 20); do
+    D=$(find_dev) && break
+    D=""
+    sleep 0.5
+done
+
+if [ -z "$D" ]; then
+    log "no ad4080 IIO device present - nothing to do (eval card not fitted?)"
+    exit 0
+fi
+log "found $D"
+
+if ! echo "$FILTER" > "$D/filter_type" 2>/dev/null; then
+    log "could not set filter_type=$FILTER - leaving defaults alone"
+    exit 0
+fi
+
+if ! echo "$OSR" > "$D/oversampling_ratio" 2>/dev/null; then
+    log "could not set oversampling_ratio=$OSR (filter is $(cat "$D/filter_type" 2>/dev/null))"
+    exit 0
+fi
+
+RATE=$(cat "$D/sampling_frequency" 2>/dev/null || echo "?")
+log "filter=$(cat "$D/filter_type" 2>/dev/null) oversampling_ratio=$(cat "$D/oversampling_ratio" 2>/dev/null) sampling_frequency=$RATE"
+
+if [ "$RATE" = "$TARGET" ]; then
+    log "at the $TARGET Hz target"
+else
+    log "NOT at $TARGET Hz - check the CNV clock (expect 32.768 MHz from AD9508 OUT2)"
+fi
+
+exit 0
