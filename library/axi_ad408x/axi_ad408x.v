@@ -93,11 +93,26 @@ module axi_ad408x #(
   output        [31:0]    s_axi_rdata,
   input                   s_axi_rready,
   input         [ 2:0]    s_axi_awprot,
-  input         [ 2:0]    s_axi_arprot
+  input         [ 2:0]    s_axi_arprot,
+
+  // Debug taps for ILA observation of the IDELAY control path. Fixed widths
+  // because ANSI ports cannot reference the localparams below: NUM_LANES is 2
+  // and DRP_WIDTH is at most 9, so up_drdata is at most 18 bits. Narrower
+  // values zero-extend on assignment.
+  output        [ 1:0]    dbg_up_dld,
+  output        [17:0]    dbg_up_drdata,
+  output        [ 7:0]    dbg_serdes_data,
+  output        [19:0]    dbg_packed,
+  output        [19:0]    dbg_shifted,
+  output        [15:0]    dbg_state
 );
 
   localparam DELAY_CTRL_NUM_LANES = 2;
-  localparam DELAY_CTRL_DRP_WIDTH = 5;
+  // 7-series IDELAYE2 has a 5-bit tap counter; UltraScale/UltraScale+ IDELAYE3
+  // has a 9-bit one (CNTVALUEIN/CNTVALUEOUT are [8:0]). Hardcoding 5 left 480 of
+  // the 512 delay steps unreachable, so on carriers whose FMC routing puts the
+  // sample point outside the eye no tap could ever align.
+  localparam DELAY_CTRL_DRP_WIDTH = (FPGA_TECHNOLOGY == 1) ? 5 : 9;
   localparam ADC_DATA_WIDTH  = ((ADC_N_BITS > 16)? 32 : 16);
 
   // internal signals
@@ -105,6 +120,10 @@ module axi_ad408x #(
   wire  [DELAY_CTRL_DRP_WIDTH*DELAY_CTRL_NUM_LANES-1:0]  up_dwdata;
   wire  [DELAY_CTRL_DRP_WIDTH*DELAY_CTRL_NUM_LANES-1:0]  up_drdata;
   wire  [DELAY_CTRL_NUM_LANES-1:0]                       up_dld;
+
+  // debug taps (see port declarations above)
+  assign dbg_up_dld    = up_dld;
+  assign dbg_up_drdata = up_drdata;
 
   wire   [ 7:0]    adc_custom_control_s;
   wire   [ 1:0]    adc_device_code;
@@ -278,6 +297,15 @@ module axi_ad408x #(
     .FPGA_TECHNOLOGY(FPGA_TECHNOLOGY),
     .IO_DELAY_GROUP(IO_DELAY_GROUP),
     .IODELAY_CTRL(1),
+    /*
+     * MUST be passed down: ad408x_phy defaults DRP_WIDTH to 5 and forwards it to
+     * ad_serdes_in, which slices up_dwdata/up_drdata per lane with it. Leaving
+     * it at the default while up_delay_cntrl uses DELAY_CTRL_DRP_WIDTH (9 on
+     * UltraScale+) drives an 18-bit bus into a 10-bit port - the top bits are
+     * dropped and the per-lane slicing no longer matches, so IDELAYE3 never
+     * latches a coherent tap. Harmless while both happened to be 5.
+     */
+    .DRP_WIDTH(DELAY_CTRL_DRP_WIDTH),
     .ADC_N_BITS(ADC_N_BITS),
     .ADC_DATA_WIDTH(ADC_DATA_WIDTH)
   ) ad408x_interface (
@@ -307,7 +335,11 @@ module axi_ad408x #(
     .sync_status(sync_status),
     .filter_enable(filter_enable),
     .filter_rdy_n(filter_data_ready_n),
-    .sync_n(sync_n));
+    .sync_n(sync_n),
+    .dbg_serdes_data(dbg_serdes_data),
+    .dbg_packed(dbg_packed),
+    .dbg_shifted(dbg_shifted),
+    .dbg_state(dbg_state));
 
   // adc delay control
 

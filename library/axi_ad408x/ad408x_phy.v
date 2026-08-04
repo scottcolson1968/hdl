@@ -80,7 +80,14 @@ module ad408x_phy #(
   output                            adc_valid,
 
   // Synchronization signals used when CNV signal is not present
-  output                            sync_status
+  output                            sync_status,
+
+  // ILA debug taps (see patch_phy_probes.py). Observation only -
+  // nothing in the datapath depends on these.
+  output  [ 7:0]                    dbg_serdes_data,
+  output  [19:0]                    dbg_packed,
+  output  [19:0]                    dbg_shifted,
+  output  [15:0]                    dbg_state
 );
 
   localparam CMOS_LVDS_N     = 0; // Use always LVDS mode
@@ -574,5 +581,14 @@ module ad408x_phy #(
   end
 
   assign adc_valid = filter_enable ?  (packed_data_valid_d & filter_ready) : packed_data_valid_d;
+
+
+  // ---- ILA debug taps ----------------------------------------------
+  assign dbg_serdes_data = serdes_data_8;
+  assign dbg_packed      = ad_pack_odata_20;
+  assign dbg_shifted     = adc_data_shifted;
+  assign dbg_state       = {4'd0, single_lane, device_code, shift_cnt,
+                            packed_data_valid, shift_cnt_en,
+                            serdes_valid[1], serdes_reset_s};
 
 endmodule

@@ -9,7 +9,7 @@ source $ad_hdl_dir/library/scripts/adi_ip_xilinx.tcl
 adi_ip_create axi_ad408x
 
 adi_ip_files axi_ad408x [list \
-  "$ad_hdl_dir/library/xilinx/common/ad_serdes_in.v" \
+  "$ad_hdl_dir/library/axi_ad408x/ad_serdes_in.v" \
   "$ad_hdl_dir/library/common/ad_pack.v" \
   "$ad_hdl_dir/library/common/ad_rst.v" \
   "$ad_hdl_dir/library/xilinx/common/ad_data_clk.v" \

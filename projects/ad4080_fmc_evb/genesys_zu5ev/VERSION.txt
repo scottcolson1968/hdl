@@ -1,0 +1,86 @@
+  1.1.0
+  Note: First line needs to be the current version (Wildcat2 versioning starts fresh at 1.0.0)
+
+  Spectral Dynamics Wildcat2 Image
+  EVAL-AD4080-FMC on the Digilent Genesys ZU-5EV (Zynq UltraScale+ XCZU5EV)
+  ===================================================================
+  Derived from the ADI ad4080_fmc_evb ZedBoard reference project, retargeted
+  to the Genesys ZU-5EV carrier. Reuses the Wildcat (AD7383-4) backhaul:
+  10G SFP+ (open MAC + TCP checksum offload), USB IIO gadget, WiFi AP,
+  USB-stick auto-updater, RGB status LED, and the fast headless boot.
+
+  HDL repository: https://github.com/analogdevicesinc/hdl
+  HDL branch: main
+
+  Linux repository: https://github.com/scottcolson1968/Wildcat
+  Linux branch: main
+
+  ADC: AD4080 -- 20-bit, 40 MSPS differential SAR, LVDS (DCO + DA/DB) interface.
+
+  ---------------------------------------------------------------------
+  1.1.0  (2026-08-04)  FIRST WORKING AD4080 CAPTURE on the Genesys ZU-5EV.
+
+         Root cause of the long-standing "Data alignment process failed"
+         (-110): the UltraScale+ branch of library/xilinx/common/ad_serdes_in.v
+         hardcodes .DATA_WIDTH (8) on ISERDESE3, ignoring SERDES_FACTOR. The
+         7-series ISERDESE2 branch passes it correctly. ad408x_phy asks for
+         SERDES_FACTOR(4) and drives CLKDIV = clk/2, which delivers only 4 new
+         bits per CLKDIV; an ISERDESE3 built for 8 bits per CLKDIV but clocked
+         twice as often repeats every bit across two output words. The packer
+         therefore assembled its 20-bit word from 10 real ADC bits, so no
+         shift_cnt (0..19) and no IDELAY tap (0..511) could ever match the
+         0xAC5D6 training pattern. Measured on the wire as a 40-bit period
+         where 20 was expected (perfect 20-bit period after decimate-by-2).
+
+         The fix is one line, in a LOCAL copy of ad_serdes_in.v under
+         library/axi_ad408x/ (the shared file is left untouched -- four other
+         IPs use it). The Q mapping must NOT be changed: in 4-bit mode the
+         valid bits are Q[7:4], exactly where data_s0..s3 already sit.
+             -  .DATA_WIDTH (8),
+             +  .DATA_WIDTH (SERDES_FACTOR),
+
+         This also affects ADI's own admx6001_ebz/vcu118 (AD4080 via
+         axi_ad408x at SERDES_FACTOR(4) on Virtex UltraScale+) -- worth
+         reporting upstream.
+
+         Results:
+         - IDELAY alignment window 203..511 (309 taps wide), tap 357
+         - ad4080 probes; iio:device4 present; real converted data
+         - local capture 156.0 MB/s = 39.0 MSPS (97.5% of the 40 MSPS max)
+         - 5 MSPS (sinc5+pf1, OSR 4 = decimate by 8) over 10G with a 16k
+           buffer: 19.7 MB/s = 4.91 MSPS sustained over 20 s, 98.3%, no
+           overflow, iiod at 44% of one core
+         - buffer size dominates the network path: at 1024 samples each
+           buffer costs a ~0.9 ms libiio-0.26 round trip, capping it at
+           ~1.1 MSPS on 10G and 1.66 MSPS on 1G regardless of link speed
+
+         Other fixes in this release:
+         - axi_ad408x.v: DELAY_CTRL_DRP_WIDTH is 9 on UltraScale/UltraScale+
+           and 5 on 7-series (was hardcoded 5), matching axi_adrv9001's own
+           ternary, and the width is now propagated into ad408x_phy -- an
+           18-bit DRP bus was being driven into a 10-bit port.
+         - library/axi_ad408x/Makefile: XILINX_DEPS tracks the ad_serdes_in.v
+           that axi_ad408x_ip.tcl actually compiles. When those two disagree
+           make silently no-ops (exit 0, no output, and the ADI makefile
+           deletes *.log), so a stale bitstream gets tested. Always confirm
+           system_top.bit was regenerated before deploying.
+         - ad408x_phy.v / axi_ad408x.v: ILA debug taps (serdes_data_8,
+           ad_pack_odata_20, adc_data_shifted, and a state word carrying
+           serdes_reset_s / shift_cnt / device_code). Observation only.
+           Strip these for a production build.
+         - device tree: adi,num-lanes = <1> with AD9508 OUT3 /1 (400 MHz DCO),
+           matching the ZedBoard reference. 200 MHz DCO was tested and kills
+           the lanes entirely -- the part requires the 400 MHz clock.
+
+         Diagnostic note: adc_data at the IP boundary is GATED by the channel
+         enable. Any ILA capture of it reads 0x00000000 unless
+         0x80010400 is set to 0x51 (ENABLE|FMT_EN|FMT_SIGNEXT) first. This
+         invalidated an entire day of measurements before it was spotted.
+
+  1.0.0  (2026-07-24)  Wildcat2 project kickoff / initial scaffold.
+         - New project tree projects/ad4080_fmc_evb/genesys_zu5ev (mirror of
+           the ad738x_fmc/genesys_zu5ev port).
+         - Backhaul carried over from Wildcat v0.73 (10G, USB gadget, WiFi AP,
+           USB updater, RGB LED, VADJ manual-override arm).
+         - AD4080 LVDS front-end (axi_ad408x + axi_clock_monitor + axi_dmac)
+           and FMC pin mapping: IN PROGRESS -- see README "Open work".
