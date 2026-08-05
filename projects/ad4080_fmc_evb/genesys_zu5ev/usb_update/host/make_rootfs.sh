@@ -30,6 +30,20 @@ OVL="$HERE/overlay"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # stage overlay
 cp -a "$OVL/." "$TMP/"
+
+# stage the project's VERSION.txt as the in-rootfs copy. VERSION.txt has ONE
+# source of truth -- projects/ad4080_fmc_evb/genesys_zu5ev/VERSION.txt -- and it
+# is generated into the rootfs here rather than duplicated under overlay/, so
+# the two cannot drift. daq-version-sync then copies it onto /boot at boot,
+# which is where iiod_context.sh reads the fw_version context attribute from.
+PROJ_VERSION="$HERE/../VERSION.txt"
+if [ -f "$PROJ_VERSION" ]; then
+    mkdir -p "$TMP/usr/local/share/wildcat2"
+    cp -f "$PROJ_VERSION" "$TMP/usr/local/share/wildcat2/VERSION.txt"
+    echo "staged VERSION.txt ($(head -1 "$PROJ_VERSION" | tr -d '[:space:]')) -> /usr/local/share/wildcat2/"
+else
+    echo "WARNING: no VERSION.txt at $PROJ_VERSION - /boot copy will not be refreshed"
+fi
 # stage any extra mirrored roots (e.g. modules_install output)
 for extra in "$@"; do
     [ -d "$extra" ] || { echo "extra root not a dir: $extra"; exit 1; }

@@ -1,0 +1,22 @@
+#  SPDX-License-Identifier: LGPL-2.1+
+#
+# Copy the shipped VERSION.txt onto /boot before any IIO daemon starts, so the
+# fw_version context attribute libiio serves (iiod_context.sh reads
+# /boot/VERSION.txt) matches the release actually installed.
+#
+# Only writes when the two differ, so a normal boot does not touch the FAT32
+# /boot partition at all. See /usr/local/bin/daq-version-sync.
+
+[Unit]
+Description=Sync VERSION.txt to /boot for the libiio fw_version attribute
+RequiresMountsFor=/boot
+ConditionPathExists=/usr/local/share/wildcat2/VERSION.txt
+Before=iiod.service iiod_ffs.service iiod026.service
+
+[Service]
+ExecStart=/bin/sh /usr/local/bin/daq-version-sync
+RemainAfterExit=yes
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target

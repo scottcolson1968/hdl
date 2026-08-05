@@ -1,0 +1,57 @@
+#!/bin/sh
+###############################################################################
+# daq-version-sync - keep /boot/VERSION.txt in step with the shipped release
+# notes.
+#
+# VERSION.txt has one source of truth: projects/ad4080_fmc_evb/genesys_zu5ev/
+# VERSION.txt in the hdl repo. make_rootfs.sh stages it into the rootfs at
+# $SRC below, and this unit copies it onto /boot at boot so the copy libiio
+# advertises as the fw_version context attribute (see iiod_context.sh, which
+# reads /boot/VERSION.txt) is never stale.
+#
+# WHY IT ONLY WRITES ON A MISMATCH: /boot is FAT32, and writing to it while
+# mounted is what corrupted the filesystem twice on this platform. cmp first so
+# a normal boot -- where the two already agree -- touches nothing at all. The
+# write happens once, on the boot after an update, and is a ~10 KB text file.
+#
+# Never fails the boot: every path exits 0. A missing source, an unmounted or
+# read-only /boot, all just log and return.
+###############################################################################
+SRC=/usr/local/share/wildcat2/VERSION.txt
+DST=/boot/VERSION.txt
+
+log() { echo "daq-version-sync: $*"; }
+
+[ -f "$SRC" ] || { log "no source at $SRC - nothing to do"; exit 0; }
+
+# /boot must be a real mount point, or we would be writing into the rootfs
+# directory that /boot shadows and the change would vanish at the next mount.
+if ! mountpoint -q /boot 2>/dev/null; then
+    log "/boot is not mounted - skipping"
+    exit 0
+fi
+
+if cmp -s "$SRC" "$DST" 2>/dev/null; then
+    log "up to date ($(head -1 "$DST" 2>/dev/null | tr -d '[:space:]'))"
+    exit 0
+fi
+
+OLD=$(head -1 "$DST" 2>/dev/null | tr -d '[:space:]')
+NEW=$(head -1 "$SRC" 2>/dev/null | tr -d '[:space:]')
+
+# Write to a temp file on /boot and rename, so an interrupted write cannot
+# leave a truncated VERSION.txt where the old one used to be.
+if ! cp -f "$SRC" "$DST.new" 2>/dev/null; then
+    log "cannot write to /boot (read-only?) - leaving ${OLD:-none} in place"
+    exit 0
+fi
+sync
+if mv -f "$DST.new" "$DST" 2>/dev/null; then
+    sync
+    log "updated ${OLD:-none} -> ${NEW:-unknown}"
+else
+    log "rename failed - leaving ${OLD:-none} in place"
+    rm -f "$DST.new" 2>/dev/null
+fi
+
+exit 0

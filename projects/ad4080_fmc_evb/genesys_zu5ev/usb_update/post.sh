@@ -12,7 +12,7 @@
 set -u
 
 # --- executables shipped by the overlay
-for f in /usr/local/bin/daq-update /usr/local/bin/daq-usb-update          /usr/local/bin/daq-adc-defaults; do
+for f in /usr/local/bin/daq-update /usr/local/bin/daq-usb-update          /usr/local/bin/daq-adc-defaults /usr/local/bin/daq-version-sync; do
     [ -e "$f" ] && chmod 0755 "$f"
 done
 
@@ -31,5 +31,6 @@ done
 #       systemctl enable --now wildcat-ap.service   2>/dev/null || true
 #       systemctl enable --now daq-status-led.service 2>/dev/null || true
 systemctl enable daq-adc-defaults.service 2>/dev/null || true
+systemctl enable daq-version-sync.service 2>/dev/null || true
 
 echo "post.sh: Wildcat2 overlay activated"
