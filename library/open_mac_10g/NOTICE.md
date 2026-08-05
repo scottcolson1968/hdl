@@ -27,8 +27,13 @@ Upstream: https://github.com/alexforencich/verilog-ethernet
 
 `src/open_mac_10g.v` is the Wildcat wrapper that adapts the above to the ADI
 project structure. Sibling IPs `library/tx_csum_open` (open TX checksum offload)
-and `library/xxv_shim` are also local. None of these three currently carry a
-copyright header — worth adding one before any external distribution.
+and `library/xxv_shim` are also local.
+
+These are **© 2026 Spectral Dynamics, MIT** (`SPDX-License-Identifier: MIT`),
+chosen to match the verilog-ethernet code they wrap so the whole IP is uniformly
+licensed. The same header is on the byte-identical copies under
+`projects/ad4080_fmc_evb/genesys_zu5ev/cso_open/hdl/`, including the
+`tb_tx_csum_open.v` testbench.
 
 ## Why this exists
 
