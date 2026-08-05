@@ -1,5 +1,6 @@
-  1.1.0
-  Note: First line needs to be the current version (Wildcat2 versioning starts fresh at 1.0.0)
+  1.2
+  Note: First line needs to be the current version. From 1.2 onwards Wildcat2
+        uses two-part MAJOR.MINOR versions; 1.0.0 and 1.1.0 were the old form.
 
   Spectral Dynamics Wildcat2 Image
   EVAL-AD4080-FMC on the Digilent Genesys ZU-5EV (Zynq UltraScale+ XCZU5EV)
@@ -18,6 +19,48 @@
   ADC: AD4080 -- 20-bit, 40 MSPS differential SAR, LVDS (DCO + DA/DB) interface.
 
   ---------------------------------------------------------------------
+  1.2    (2026-08-04)  Wildcat2 target operating point: 4.096 MSPS.
+
+         Clock chain retuned from the ADI reference point (400 MHz / 40 MSPS,
+         used during bring-up to remove our clock tree as a variable) to the
+         Wildcat2 target. Only the ADF4350 frequency changes -- the AD9508
+         dividers were already correct, so the 10-clocks-per-sample ratio is
+         preserved:
+             ADF4350        327.68 MHz EXACTLY
+                            channel-spacing 40 kHz -> MOD = 25 MHz / 40 kHz
+                            = 625, zero frequency error (100 kHz spacing
+                            cannot express 327.68 MHz; the power-of-two FFT
+                            frame needs it exact)
+             OUT3 /1        327.68 MHz  -> LVDS interface clock (DCO)
+             OUT2 /10        32.768 MHz -> CNV = 32.768 MSPS conversion rate
+             OUT0 /10        32.768 MHz -> FPGACLK
+             sinc5+pf1, OSR 4 = decimation 8  ->  4.096 MSPS
+
+         CLK and CNV must be scaled TOGETHER. Halving OUT3 alone (200 MHz DCO
+         with CNV left at 40 MHz) was tested and killed the lanes outright:
+         the part needed 800 Mbps of launch bandwidth while the clock could
+         only carry 400.
+
+         Validated at the target rate:
+         - alignment window 191..511 (321 taps wide), tap 351
+         - sampling_frequency reads 4096000
+         - local capture 4.05 MSPS at both -b 1024 and -b 16384
+         - 10G, -b 16384, 80M samples: 19.58 s vs 19.53 s ideal =
+           4.0866 MSPS = 99.77%, 16.35 MB/s, no overflow, iiod ~44% of one core
+         - 1G, -b 16384: 3.95 MSPS (96.4%) -- borderline, would slowly fall
+           behind; 10G remains the transport
+         - buffer size still dominates the NETWORK path: at -b 1024 each
+           buffer costs a ~0.9 ms libiio-0.26 round trip (single buffer in
+           flight), capping it at ~1.1 MSPS on 10G and 1.64 MSPS on 1G
+           regardless of link speed or sample rate. Locally the constraint is
+           free at this rate -- 1024 and 16384 both give 4.05 MSPS.
+
+         Note the ~26 MB/s ceiling measured on the iiod path at large buffers
+         is well under what this 10G link has delivered before (~200 MiB/s),
+         so there is headroom to recover if higher aggregate rates are needed
+         -- relevant for the 16-channel plan, where 16 x 4.096 MSPS x 4 B is
+         ~262 MB/s.
+
   1.1.0  (2026-08-04)  FIRST WORKING AD4080 CAPTURE on the Genesys ZU-5EV.
 
          Root cause of the long-standing "Data alignment process failed"
